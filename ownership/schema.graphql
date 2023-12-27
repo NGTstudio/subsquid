@@ -1,0 +1,28 @@
+type NFT @entity {
+  id: ID!
+  owner: Owner
+  transfers: [Transfer!]! @derivedFrom(field: "nft")
+  contract: Contract
+}
+
+type Owner @entity {
+  id: ID!
+  nfts: [NFT!]! @derivedFrom(field: "owner")
+  balance: BigInt
+}
+
+type Contract @entity {
+  id: ID!
+  symbol: String
+  totalSupply: BigInt
+  nfts: [NFT!]! @derivedFrom(field: "contract")
+}
+
+type Transfer @entity {
+  id: ID!
+  nft: NFT!
+  from: Owner
+  to: Owner
+  timestamp: Int!
+  block: Int!
+}
