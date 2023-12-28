@@ -1,6 +1,6 @@
 import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, ManyToOne as ManyToOne_, Index as Index_} from "typeorm"
-import {NFT} from "./nft.model"
-import {Owner} from "./owner.model"
+import {Wallet} from "./wallet.model"
+import {Token} from "./token.model"
 
 @Entity_()
 export class Transfer {
@@ -11,21 +11,24 @@ export class Transfer {
     @PrimaryColumn_()
     id!: string
 
-    @Index_()
-    @ManyToOne_(() => NFT, {nullable: true})
-    nft!: NFT
-
-    @Index_()
-    @ManyToOne_(() => Owner, {nullable: true})
-    from!: Owner | undefined | null
-
-    @Index_()
-    @ManyToOne_(() => Owner, {nullable: true})
-    to!: Owner | undefined | null
-
-    @Column_("int4", {nullable: false})
-    timestamp!: number
-
     @Column_("int4", {nullable: false})
     block!: number
+
+    @Column_("timestamp with time zone", {nullable: false})
+    timestamp!: Date
+
+    @Column_("text", {nullable: false})
+    txHash!: string
+
+    @Index_()
+    @ManyToOne_(() => Wallet, {nullable: true})
+    from!: Wallet
+
+    @Index_()
+    @ManyToOne_(() => Wallet, {nullable: true})
+    to!: Wallet
+
+    @Index_()
+    @ManyToOne_(() => Token, {nullable: true})
+    token!: Token
 }

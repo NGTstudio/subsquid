@@ -1,6 +1,5 @@
 import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, OneToMany as OneToMany_} from "typeorm"
-import * as marshal from "./marshal"
-import {NFT} from "./nft.model"
+import {Token} from "./token.model"
 
 @Entity_()
 export class Contract {
@@ -11,12 +10,12 @@ export class Contract {
     @PrimaryColumn_()
     id!: string
 
-    @Column_("text", {nullable: true})
-    symbol!: string | undefined | null
+    @Column_("text", {nullable: false})
+    name!: string
 
-    @Column_("numeric", {transformer: marshal.bigintTransformer, nullable: true})
-    totalSupply!: bigint | undefined | null
+    @Column_("text", {nullable: false})
+    symbol!: string
 
-    @OneToMany_(() => NFT, e => e.contract)
-    nfts!: NFT[]
+    @OneToMany_(() => Token, e => e.contract)
+    tokens!: Token[]
 }

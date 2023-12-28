@@ -1,134 +1,118 @@
-import { Store, TypeormDatabase } from '@subsquid/typeorm-store'
-import { In } from 'typeorm'
-import {
-    evoAddress,
-    contractMapping
-} from './contracts'
-import { Owner, NFT, Transfer } from './model'
-import * as erc721 from './abi/erc721'
-import {
-    processor,
-    ProcessorContext,
-    Event,
-    Block
-} from './processor'
+import "dotenv/config";
+import { TypeormDatabase } from "@subsquid/typeorm-store";
+import { In } from "typeorm";
+import * as erc721 from "./abi/erc721";
+import { contractMapping, EVO_ADDRESS } from "./contracts";
+import { Token, Wallet, Transfer } from "./model";
+import { Block, Context, Log, processor } from "./processor";
 
-var contractsSaved = false
+var contractsSaved = false;
 
-processor.run(new TypeormDatabase(), async (ctx) => {
-    const transfersData: TransferData[] = [];
+processor.run(new TypeormDatabase({ supportHotBlocks: true }), async (ctx) => {
+  const transfersData: TransferData[] = [];
 
-    for (const block of ctx.blocks) {
-        for (const event of block.events) {
-            if (event.name === 'EVM.Log') {
-                const transfer = handleTransfer(block.header, event)
-                transfersData.push(transfer)
-            }
-        }
+  for (const block of ctx.blocks) {
+    for (const log of block.logs) {
+      if (log.address === EVO_ADDRESS && log.topics[0] === erc721.events.Transfer.topic && log.transaction?.status === 1) {
+        const transfer = handleTransfer(ctx, block.header, log);
+        transfersData.push(transfer);
+      }
     }
-
-    if (!contractsSaved) {
-        await ctx.store.upsert([...contractMapping.values()])
-        contractsSaved = true
-    }
-    await saveTransfers(ctx, transfersData)
-})
+  }
+  if (!contractsSaved) {
+    await ctx.store.upsert([ ...contractMapping.values() ])
+    contractsSaved = true
+  }
+  await saveTransfers(ctx, transfersData);
+});
 
 type TransferData = {
-    id: string
-    from: string
-    to: string
-    nft: bigint
-    timestamp: number
-    block: number
-    contractAddress: string
+  id: string
+  block: number
+  timestamp: Date
+  txHash: string
+  from: string
+  to: string
+  tokenId: bigint
+  contractAddress: string
 }
 
-function handleTransfer(block: Block, event: Event): TransferData {
-    const { from, to, tokenId } = erc721.events.Transfer.decode(event)
-    return {
-        id: event.id,
-        from,
-        to,
-        nft: tokenId,
-        timestamp: block.timestamp,
-        block: block.height,
-        contractAddress: event.args.address
-    }
+function handleTransfer(ctx: Context, block: Block, log: Log): TransferData {
+  const { from, to, tokenId } = erc721.events.Transfer.decode(log);
+  ctx.log.info(`Parsed a Transfer of token ${tokenId} from ${from} to ${to}`);
+  return {
+    id: log.id,
+    block: block.height,
+    timestamp: new Date(block.timestamp),
+    txHash: log.transaction?.hash ?? "",
+    from,
+    to,
+    tokenId,
+    contractAddress: log.address,
+  };
 }
 
-async function saveTransfers(ctx: ProcessorContext<Store>, transfersData: TransferData[]) {
-    const getTokenId = (transferData: TransferData) => `${contractMapping.get(transferData.contractAddress)?.symbol ?? ""}-${transferData.nft.toString()}`
+async function saveTransfers(ctx: Context, transfersData: TransferData[]) {
 
-    const nftsIds: Set<string> = new Set()
-    const ownersIds: Set<string> = new Set()
+  const getTokenId = (data: TransferData) => `${data.contractAddress}-${data.tokenId.toString()}`;
 
-    for (const transferData of transfersData) {
-        nftsIds.add(getTokenId(transferData))
-        ownersIds.add(transferData.from)
-        ownersIds.add(transferData.to)
+  const tokenIds: Set<string> = new Set();
+  const walletIds: Set<string> = new Set();
+
+  for (const transferData of transfersData) {
+    tokenIds.add(getTokenId(transferData));
+    walletIds.add(transferData.from);
+    walletIds.add(transferData.to);
+  }
+
+  const tokens: Map<string, Token> = new Map(
+    (
+      await ctx.store.findBy(Token, { id: In([ ...tokenIds ]) })
+    ).map(token => [ token.id, token ]),
+  );
+
+  const wallets: Map<string, Wallet> = new Map(
+    (
+      await ctx.store.findBy(Wallet, { id: In([ ...walletIds ]) })
+    )
+      .map(wallet => [ wallet.id, wallet ]),
+  );
+
+  const transfers: Set<Transfer> = new Set();
+
+  for (const transferData of transfersData) {
+
+    let from = wallets.get(transferData.from);
+    if (from == null) {
+      from = new Wallet({ id: transferData.from });
+      wallets.set(from.id, from);
     }
 
-    const nfts: Map<string, NFT> = new Map(
-      (await ctx.store.findBy(NFT, { id: In([...nftsIds]) }))
-        .map(nft => [nft.id, nft])
-    )
-
-    const owners: Map<string, Owner> = new Map(
-      (await ctx.store.findBy(Owner, { id: In([...ownersIds]) }))
-        .map(owner => [owner.id, owner])
-    )
-
-    const transfers: Set<Transfer> = new Set()
-
-    for (const transferData of transfersData) {
-        const contract = new erc721.Contract(
-          // temporary workaround for SDK issue 212
-          // passing just the ctx as first arg may already work
-          {_chain: {client: ctx._chain.rpc}},
-          { height: transferData.block },
-          transferData.contractAddress
-        )
-
-        let from = owners.get(transferData.from)
-        if (from == null) {
-            from = new Owner({ id: transferData.from, balance: 0n })
-            owners.set(from.id, from)
-        }
-
-        let to = owners.get(transferData.to)
-        if (to == null) {
-            to = new Owner({ id: transferData.to, balance: 0n })
-            owners.set(to.id, to)
-        }
-
-        const nftId = getTokenId(transferData)
-        let nft = nfts.get(nftId)
-        if (nft == null) {
-            nft = new NFT({
-                id: nftId,
-                contract: contractMapping.get(transferData.contractAddress)
-            })
-            nfts.set(nft.id, nft)
-        }
-
-        nft.owner = to
-
-        const { id, block, timestamp } = transferData
-
-        const transfer = new Transfer({
-            id,
-            block,
-            timestamp,
-            from,
-            to,
-            nft
-        })
-
-        transfers.add(transfer)
+    let to = wallets.get(transferData.to);
+    if (to == null) {
+      to = new Wallet({ id: transferData.to });
+      wallets.set(to.id, to);
     }
 
-    await ctx.store.upsert([...owners.values()])
-    await ctx.store.upsert([...nfts.values()])
-    await ctx.store.insert([...transfers])
+    const tokenId = getTokenId(transferData);
+    let token = tokens.get(tokenId);
+    if (token == null) {
+      token = new Token({
+        id: tokenId,
+        contract: contractMapping.get(transferData.contractAddress),
+      });
+      tokens.set(token.id, token);
+    }
+
+    token.owner = to;
+
+    const { id, block, timestamp, txHash } = transferData;
+    const transfer = new Transfer({ id, block, timestamp, txHash, from, to, token });
+
+    transfers.add(transfer);
+  }
+
+  await ctx.store.upsert([ ...wallets.values() ]);
+  await ctx.store.upsert([ ...tokens.values() ]);
+  await ctx.store.insert([ ...transfers ]);
 }

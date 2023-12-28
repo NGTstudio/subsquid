@@ -1,28 +1,31 @@
-type NFT @entity {
+type Token @entity {
   id: ID!
-  owner: Owner
-  transfers: [Transfer!]! @derivedFrom(field: "nft")
+  tokenId: BigInt!
+  owner: Wallet
+  transfers: [Transfer!]! @derivedFrom(field: "token")
   contract: Contract
 }
 
-type Owner @entity {
+type Wallet @entity {
   id: ID!
-  nfts: [NFT!]! @derivedFrom(field: "owner")
-  balance: BigInt
+  tokens: [Token!]! @derivedFrom(field: "owner")
+  transfersFrom: [Transfer!]! @derivedFrom(field: "from")
+  transfersTo: [Transfer!]! @derivedFrom(field: "to")
 }
 
 type Contract @entity {
   id: ID!
-  symbol: String
-  totalSupply: BigInt
-  nfts: [NFT!]! @derivedFrom(field: "contract")
+  name: String!
+  symbol: String!
+  tokens: [Token!]! @derivedFrom(field: "contract")
 }
 
 type Transfer @entity {
   id: ID!
-  nft: NFT!
-  from: Owner
-  to: Owner
-  timestamp: Int!
   block: Int!
+  timestamp: DateTime!
+  txHash: String!
+  from: Wallet!
+  to: Wallet!
+  token: Token!
 }
